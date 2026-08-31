@@ -1,5 +1,7 @@
+from django.db.models import Q
 from rest_framework import serializers
-from .models import URL
+
+from shortener.models import URL
 
 
 class URLCreateSerializer(serializers.ModelSerializer):
@@ -7,11 +9,18 @@ class URLCreateSerializer(serializers.ModelSerializer):
         model = URL
         fields = ['id', 'original_url', 'custom_alias', 'expires_at']
 
-    def create(self, validated_data):
-        alias = validated_data.get('custom_alias')
-        if alias and URL.objects.filter(short_code=alias).exists():
-            raise serializers.ValidationError({'custom_alias': 'This alias is already taken.'})
-        return super().create(validated_data)
+    def validate_custom_alias(self, value):
+        """Reject an alias that any existing URL already answers to.
+
+        Checked against `short_code` as well as `custom_alias`: a code is
+        reachable by either column, so an alias colliding with someone's
+        generated code would make the redirect ambiguous.
+        """
+        if not value:
+            return value
+        if URL.objects.filter(Q(short_code=value) | Q(custom_alias=value)).exists():
+            raise serializers.ValidationError('This alias is already taken.')
+        return value
 
 
 class URLDetailSerializer(serializers.ModelSerializer):
@@ -22,7 +31,7 @@ class URLDetailSerializer(serializers.ModelSerializer):
         fields = ['id', 'original_url', 'short_code', 'custom_alias', 'short_url',
                   'is_active', 'expires_at', 'click_count', 'created_at']
 
-    def get_short_url(self, obj):
+    def get_short_url(self, obj) -> str:
         request = self.context.get('request')
         code = obj.active_code
         if request:
