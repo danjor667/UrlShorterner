@@ -1,12 +1,15 @@
 #!/usr/bin/env python
-"""Django's command-line utility for administrative tasks."""
+"""Django's command-line utility for the shortener service."""
 import os
 import sys
+from pathlib import Path
+
+# The shared settings base lives outside this service's tree.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'libs'))
 
 
 def main():
-    """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'urlshorterner.settings')
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shortener_service.settings')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

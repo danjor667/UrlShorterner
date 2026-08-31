@@ -1,11 +1,14 @@
-from django.shortcuts import get_object_or_404
+from django.db.models import F, Q
 from django.http import HttpResponseRedirect
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from drf_spectacular.utils import extend_schema
-from .models import URL
+
+from shortener.models import URL
+
 from .serializers import URLCreateSerializer, URLDetailSerializer
 
 
@@ -18,11 +21,19 @@ class URLCreateView(generics.CreateAPIView):
         responses={201: URLDetailSerializer},
     )
     def create(self, request, *args, **kwargs):
+        """Write with the create serializer, but answer with the detail one.
+
+        The caller needs the generated `short_code` back, and that is not a
+        field they were allowed to send.
+        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         url = serializer.save()
-        response_serializer = URLDetailSerializer(url, context={'request': request})
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(
+            URLDetailSerializer(url, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
 
 class URLListView(generics.ListAPIView):
     queryset = URL.objects.filter(is_active=True)
@@ -32,15 +43,23 @@ class URLListView(generics.ListAPIView):
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
 
+
 class URLRedirectView(APIView):
+    """The public entry point — no authentication, and none to add until Module 7."""
+
     @extend_schema(exclude=True)
     def get(self, request, short_code):
-        url = get_object_or_404(URL, is_active=True, short_code=short_code) if not URL.objects.filter(
-            custom_alias=short_code, is_active=True).exists() else URL.objects.get(custom_alias=short_code, is_active=True)
+        # One query for both columns: a code may be either a generated
+        # short_code or someone's custom alias.
+        url = get_object_or_404(
+            URL.objects.filter(Q(short_code=short_code) | Q(custom_alias=short_code)),
+            is_active=True,
+        )
 
-        if url.expires_at and url.expires_at < timezone.now():
+        if url.expires_at and url.expires_at <= timezone.now():
             return Response({'error': 'This URL has expired.'}, status=status.HTTP_410_GONE)
 
-        url.click_count += 1
-        url.save(update_fields=['click_count'])
+        # F() rather than read-modify-write: two concurrent redirects would
+        # otherwise each read the same count and one increment would be lost.
+        URL.objects.filter(pk=url.pk).update(click_count=F('click_count') + 1)
         return HttpResponseRedirect(url.original_url)
