@@ -1,9 +1,12 @@
 """Shortener service settings.
 
-The only service in Module 5. It owns the `shortener` app and, with it, the
-`shortener` database — its own Postgres container, which nothing else connects
-to. Everything else comes from `common.base_settings` unchanged.
+Owns the `shortener` app and, with it, the `shortener` database — its own
+Postgres container, which nothing else connects to. Users live in the auth
+service and clicks in the analytics service, so neither is reachable from here
+by a query; see `owner_id` in shortener/models.py and ANALYTICS_URL below.
 """
+
+from decouple import config
 
 from common.base_settings import *  # noqa: F401,F403
 from common.base_settings import INSTALLED_APPS, service_database
@@ -14,6 +17,12 @@ INSTALLED_APPS = INSTALLED_APPS + ['shortener']
 # the few things that is genuinely its own. DB_* environment variables
 # override, which is how compose points this at the db-shortener container.
 DATABASES = {'default': service_database('shortener')}
+
+# The analytics service, reached over the compose network. This is the only
+# service the shortener calls: click history is not in its database, so
+# recording a click is an HTTP request. See shortener/analytics_client.py.
+ANALYTICS_URL = config('ANALYTICS_URL', default='http://analytics:8000')
+ANALYTICS_TIMEOUT = config('ANALYTICS_TIMEOUT', default=3.0, cast=float)
 
 ROOT_URLCONF = 'shortener_service.urls'
 WSGI_APPLICATION = 'shortener_service.wsgi.application'

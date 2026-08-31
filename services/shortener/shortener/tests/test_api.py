@@ -1,16 +1,23 @@
-"""Shortener service tests — Module 5.
+"""Shortener service tests — Module 6.
 
-Everything the service does at this point: create a short URL, list the active
-ones, and redirect. There is no authentication yet, so every endpoint here is
-deliberately exercised anonymously.
+Create a short URL, list the active ones, redirect, and tag. There is no
+authentication yet, so every endpoint here is deliberately exercised
+anonymously.
+
+The redirect now calls the analytics service, so every test that follows a
+short link patches `record_click`. That is the point of isolating it behind
+one function: a unit test of the shortener should not need a second service
+running. The real call is exercised end-to-end against a live stack instead.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from ..models import URL
+from ..analytics_client import AnalyticsUnavailable
+from ..models import URL, Tag
 
 
 class URLModelTests(TestCase):
@@ -99,6 +106,11 @@ class URLListAPITests(TestCase):
 class RedirectViewTests(TestCase):
     def setUp(self):
         self.url = URL.objects.create(original_url='https://example.com/target')
+        # Analytics is a hard dependency of the redirect path; stub it so
+        # these tests describe the shortener's behaviour, not the network's.
+        patcher = patch('shortener.views.record_click')
+        self.record_click = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_redirects_by_short_code(self):
         response = self.client.get(f'/{self.url.short_code}/')
@@ -135,6 +147,43 @@ class RedirectViewTests(TestCase):
 
     def test_unknown_code_returns_404(self):
         self.assertEqual(self.client.get('/nosuch/').status_code, 404)
+
+    def test_click_is_reported_to_analytics(self):
+        self.client.get(f'/{self.url.short_code}/', HTTP_USER_AGENT='pytest-agent')
+
+        self.record_click.assert_called_once()
+        url_id, request = self.record_click.call_args.args
+        self.assertEqual(url_id, self.url.pk)
+        self.assertEqual(request.META.get('HTTP_USER_AGENT'), 'pytest-agent')
+
+    def test_analytics_failure_returns_502_and_does_not_redirect(self):
+        self.record_click.side_effect = AnalyticsUnavailable('connection refused')
+
+        response = self.client.get(f'/{self.url.short_code}/')
+
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn('Location', response)
+
+    def test_counter_is_not_incremented_when_analytics_fails(self):
+        """The counter is a cache of what analytics holds.
+
+        Incrementing it after a failed report would claim a click that has no
+        row behind it, and nothing would ever reconcile the difference.
+        """
+        self.record_click.side_effect = AnalyticsUnavailable('connection refused')
+
+        self.client.get(f'/{self.url.short_code}/')
+
+        self.url.refresh_from_db()
+        self.assertEqual(self.url.click_count, 0)
+
+    def test_expired_url_is_not_reported_as_a_click(self):
+        self.url.expires_at = timezone.now() - timedelta(days=1)
+        self.url.save()
+
+        self.client.get(f'/{self.url.short_code}/')
+
+        self.record_click.assert_not_called()
 
 
 class RoutingTests(TestCase):

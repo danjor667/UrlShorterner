@@ -23,7 +23,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-only-do-not-deplo
 # single PRODUCTION_MODE switch that DEBUG is derived from.
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,shortener', cast=Csv())
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,shortener,auth,analytics', cast=Csv())
 
 RUNNING_TESTS = 'test' in __import__('sys').argv
 

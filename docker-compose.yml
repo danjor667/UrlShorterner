@@ -30,6 +30,34 @@ services:
       timeout: 5s
       retries: 5
 
+  db-auth:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: auth
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth -d auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  db-analytics:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: analytics
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+    volumes:
+      - analytics_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analytics -d analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   shortener:
     build:
       context: .
@@ -43,11 +71,60 @@ services:
       DB_USER: shortener
       DB_PASSWORD: shortener
       STATIC_ROOT: /app/staticfiles
+      # Every redirect blocks on this service, so it is a hard dependency
+      # rather than a best-effort one.
+      ANALYTICS_URL: http://analytics:8000
     depends_on:
       db-shortener:
         condition: service_healthy
+      analytics:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/urls/').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  auth:
+    build:
+      context: .
+      dockerfile: services/auth/Dockerfile
+    env_file: [.env]
+    environment:
+      DB_HOST: db-auth
+      DB_NAME: auth
+      DB_USER: auth
+      DB_PASSWORD: auth
+      STATIC_ROOT: /app/staticfiles
+    depends_on:
+      db-auth:
+        condition: service_healthy
+    healthcheck:
+      # No public endpoint yet (Module 7 adds them), so the schema view is the
+      # cheapest thing that proves Django booted and can serve a request.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  analytics:
+    build:
+      context: .
+      dockerfile: services/analytics/Dockerfile
+    env_file: [.env]
+    environment:
+      DB_HOST: db-analytics
+      DB_NAME: analytics
+      DB_USER: analytics
+      DB_PASSWORD: analytics
+      STATIC_ROOT: /app/staticfiles
+    depends_on:
+      db-analytics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/').status==200 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -67,3 +144,5 @@ volumes:
   # Named for its owner too — one volume per database, so a service's data can
   # be backed up, restored or thrown away without touching anyone else's.
   shortener_db_data:
+  auth_db_data:
+  analytics_db_data:

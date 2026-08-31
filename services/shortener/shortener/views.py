@@ -1,15 +1,18 @@
-from django.db.models import F, Q
+import logging
+
+from django.db.models import F
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .analytics_client import AnalyticsUnavailable, record_click
 from .models import URL
-
 from .serializers import URLCreateSerializer, URLDetailSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class URLCreateView(generics.CreateAPIView):
@@ -21,22 +24,15 @@ class URLCreateView(generics.CreateAPIView):
         responses={201: URLDetailSerializer},
     )
     def create(self, request, *args, **kwargs):
-        """Write with the create serializer, but answer with the detail one.
-
-        The caller needs the generated `short_code` back, and that is not a
-        field they were allowed to send.
-        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         url = serializer.save()
-        return Response(
-            URLDetailSerializer(url, context={'request': request}).data,
-            status=status.HTTP_201_CREATED,
-        )
+        response_serializer = URLDetailSerializer(url, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
 
 class URLListView(generics.ListAPIView):
-    queryset = URL.objects.filter(is_active=True)
+    queryset = URL.objects.active_urls().with_related()
     serializer_class = URLDetailSerializer
 
     @extend_schema(summary="List all active short URLs")
@@ -45,21 +41,24 @@ class URLListView(generics.ListAPIView):
 
 
 class URLRedirectView(APIView):
-    """The public entry point — no authentication, and none to add until Module 7."""
-
     @extend_schema(exclude=True)
     def get(self, request, short_code):
-        # One query for both columns: a code may be either a generated
-        # short_code or someone's custom alias.
-        url = get_object_or_404(
-            URL.objects.filter(Q(short_code=short_code) | Q(custom_alias=short_code)),
-            is_active=True,
-        )
+        url = get_object_or_404(URL.objects.get_queryset().for_code(short_code), is_active=True)
 
-        if url.expires_at and url.expires_at <= timezone.now():
+        if url.is_expired:
             return Response({'error': 'This URL has expired.'}, status=status.HTTP_410_GONE)
 
-        # F() rather than read-modify-write: two concurrent redirects would
-        # otherwise each read the same count and one increment would be lost.
+        # Analytics first, and only then the local counter. Doing it in this
+        # order means click_count can never claim a click that analytics has
+        # no row for; the reverse order would drift on every failure.
+        try:
+            record_click(url.pk, request)
+        except AnalyticsUnavailable as exc:
+            logger.error('click not recorded for url %s: %s', url.pk, exc)
+            return Response(
+                {'error': 'Click tracking is unavailable, so the redirect was not served.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
         URL.objects.filter(pk=url.pk).update(click_count=F('click_count') + 1)
         return HttpResponseRedirect(url.original_url)

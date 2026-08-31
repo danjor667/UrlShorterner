@@ -1,3 +1,5 @@
 # Convenience for running the services and their tests on a laptop without
 # Docker. Each image installs only its own service's requirements.txt.
 -r services/shortener/requirements.txt
+-r services/auth/requirements.txt
+-r services/analytics/requirements.txt
