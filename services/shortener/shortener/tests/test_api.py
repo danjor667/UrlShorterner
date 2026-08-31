@@ -7,10 +7,10 @@ deliberately exercised anonymously.
 
 from datetime import timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from shortener.models import URL
+from ..models import URL
 
 
 class URLModelTests(TestCase):
@@ -45,6 +45,25 @@ class URLCreateAPITests(TestCase):
     def test_short_url_is_absolute(self):
         body = self._create().json()
         self.assertTrue(body['short_url'].endswith(f"/{body['short_code']}/"))
+
+    @override_settings(ALLOWED_HOSTS=['short.example.com'])
+    def test_short_url_keeps_the_port_from_the_host_header(self):
+        """The returned link has to be one the caller can actually follow.
+
+        `short_url` is built from the Host header, so a non-default port has to
+        survive into it. This pins the Django half only: it cannot catch a proxy
+        that strips the port before Django ever sees it, which is what nginx's
+        `$host` does and why the gateway sends `$http_host` instead.
+        """
+        response = self.client.post(
+            self.url,
+            {'original_url': 'https://example.com', 'custom_alias': 'ported'},
+            content_type='application/json',
+            HTTP_HOST='short.example.com:8000',
+        )
+        self.assertEqual(
+            response.json()['short_url'], 'http://short.example.com:8000/ported/'
+        )
 
     def test_accepts_a_custom_alias(self):
         body = self._create(custom_alias='vanity').json()

@@ -1,4 +1,4 @@
-"""Settings every service shares.
+"""Base settings every service builds on.
 
 There is only one service in Module 5, so this file looks like overhead today.
 It exists because the alternative is worse: Module 6 stands up two more
@@ -6,8 +6,8 @@ services, and anything that must agree across all of them — the database
 conventions, the DRF defaults, the middleware order — has to live somewhere
 that is not one particular service.
 
-A service does ``from common.settings import *`` and then adds only what is
-genuinely its own: its apps, its URLconf, its database name.
+A service does ``from common.base_settings import *`` and then adds only what
+is genuinely its own: its apps, its URLconf, its database name.
 """
 
 from pathlib import Path
@@ -113,8 +113,6 @@ STORAGES = {
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-# There is no authentication yet — Module 7 introduces it. Every endpoint here
-# is public, which is stated explicitly rather than left to DRF's default.
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PERMISSION_CLASSES': [

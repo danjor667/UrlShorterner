@@ -2,11 +2,11 @@
 
 The only service in Module 5. It owns the `shortener` app; the database it
 connects to is shared with every service added later, and comes from
-`common.settings` unchanged.
+`common.base_settings` unchanged.
 """
 
-from common.settings import *  # noqa: F401,F403
-from common.settings import INSTALLED_APPS
+from common.base_settings import *  # noqa: F401,F403
+from common.base_settings import INSTALLED_APPS
 
 INSTALLED_APPS = INSTALLED_APPS + ['shortener']
 
