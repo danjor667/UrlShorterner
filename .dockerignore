@@ -1,0 +1,25 @@
+# Build context is the repo root (see services/shortener/Dockerfile), so keep
+# everything the image does not need out of it — .venv alone is ~120MB.
+.venv/
+.git/
+.gitignore
+.idea/
+
+# Secrets: compose injects these via env_file at runtime, never at build time.
+.env
+.env.example
+
+# Host-built bytecode would land in the image and contradict
+# PYTHONDONTWRITEBYTECODE=1 (and is built by a different Python than the image).
+**/__pycache__/
+**/*.py[cod]
+
+# Build/runtime artifacts produced inside the container, not on the host.
+staticfiles/
+db.sqlite3
+**/.DS_Store
+
+# Not needed by the running service.
+README.md
+requirements-dev.txt
+docker-compose.yml

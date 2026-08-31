@@ -70,26 +70,43 @@ TEMPLATES = [
 
 
 # ---------------------------------------------------------------------------
-# Database — one, shared by every service.
+# Database — one per service, each in its own Postgres container.
 #
-# Table names are namespaced by app label (`shortener_url`, `account_user`,
-# `analytics_click`), so services do not collide inside it. What they do share
-# is one `django_migrations` table, which is why from Module 6 each service
-# migrates only its OWN app — `manage.py migrate shortener` — rather than
-# letting three of them race to apply Django's built-in migrations.
+# A service owns its data outright: nothing else holds a connection to it, so
+# there is no cross-service join to accidentally rely on and no shared
+# `django_migrations` table for three services to race on. `manage.py migrate`
+# with no arguments is correct again — the built-in Django migrations are
+# applied once per database, by the one service that owns it.
+#
+# The cost is that a query spanning services becomes an API call, and that
+# `docker compose up` runs N Postgres containers. That is the trade the
+# database-per-service pattern makes, and it is the point of it.
+#
+# There is deliberately no DATABASES here: base settings cannot know which
+# database is yours. Each service declares it:
+#
+#     DATABASES = {'default': service_database('shortener')}
+#
+# Environment variables still win, which is how compose points the service at
+# its container and how a deployment injects real credentials.
 # ---------------------------------------------------------------------------
 
-DATABASES = {
-    'default': {
+def service_database(name):
+    """Return a DATABASES['default'] entry for the service's own database.
+
+    `name` is the fallback for local, non-container development, where there
+    is no compose file setting DB_* per container. In a container every one of
+    these is set explicitly, so the defaults never apply.
+    """
+    return {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='urlshortener'),
-        'USER': config('DB_USER', default='postgres'),
+        'NAME': config('DB_NAME', default=name),
+        'USER': config('DB_USER', default=name),
         'PASSWORD': config('DB_PASSWORD', default='postgres'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=0, cast=int),
     }
-}
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},

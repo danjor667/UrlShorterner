@@ -11,16 +11,21 @@
 # OpenAPI schema, and only one can own /api/docs/ behind the gateway.
 
 services:
-  db:
+  # One database per service, each in its own container. The name carries the
+  # owner: when accounts and analytics arrive in Module 6 they get db-accounts
+  # and db-analytics beside this, never a second connection into this one.
+  db-shortener:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: urlshortener
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: shortener
+      POSTGRES_USER: shortener
+      POSTGRES_PASSWORD: shortener
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - shortener_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      # -d as well as -U: without it pg_isready checks a database named after
+      # the user, which is not necessarily the one the service uses.
+      test: ["CMD-SHELL", "pg_isready -U shortener -d shortener"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,16 +34,17 @@ services:
     build:
       context: .
       dockerfile: services/shortener/Dockerfile
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py collectstatic --noinput &&
-             gunicorn shortener_service.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile -"
     env_file: [.env]
+    # These win over .env, so the container always talks to its own database
+    # regardless of what a laptop has in .env for local development.
     environment:
-      DB_HOST: db
+      DB_HOST: db-shortener
+      DB_NAME: shortener
+      DB_USER: shortener
+      DB_PASSWORD: shortener
       STATIC_ROOT: /app/staticfiles
     depends_on:
-      db:
+      db-shortener:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/urls/').status==200 else 1)\""]
@@ -58,4 +64,6 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres_data:
+  # Named for its owner too — one volume per database, so a service's data can
+  # be backed up, restored or thrown away without touching anyone else's.
+  shortener_db_data:
