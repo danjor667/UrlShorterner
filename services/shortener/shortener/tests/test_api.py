@@ -1,8 +1,9 @@
-"""Shortener service tests — Module 6.
+"""Shortener service tests — Module 7.
 
-Create a short URL, list the active ones, redirect, and tag. There is no
-authentication yet, so every endpoint here is deliberately exercised
-anonymously.
+Create a short URL, list the active ones, redirect, and tag. As of Module 7
+every endpoint but the public redirect needs a token, so these tests
+authenticate as a caller that exists only as JWT claims — see tests/support.py
+for why that is not a shortcut.
 
 The redirect now calls the analytics service, so every test that follows a
 short link patches `record_click`. That is the point of isolating it behind
@@ -18,6 +19,7 @@ from django.utils import timezone
 
 from ..analytics_client import AnalyticsUnavailable
 from ..models import URL, Tag
+from .support import AuthenticatedAPITestCase, Caller
 
 
 class URLModelTests(TestCase):
@@ -34,8 +36,14 @@ class URLModelTests(TestCase):
         self.assertEqual(url.active_code, url.short_code)
 
 
-class URLCreateAPITests(TestCase):
+class URLCreateAPITests(AuthenticatedAPITestCase):
     url = '/api/v1/urls/create/'
+
+    def setUp(self):
+        # Premium: several of these exercise custom aliases, which Module 7
+        # made a paid feature. The tier gate itself is covered in
+        # test_auth_api.py rather than incidentally here.
+        self.caller = self.authenticate(Caller(tier='premium'))
 
     def _create(self, **payload):
         payload.setdefault('original_url', 'https://example.com')
@@ -94,10 +102,13 @@ class URLCreateAPITests(TestCase):
         self.assertEqual(self._create(original_url='not-a-url').status_code, 400)
 
 
-class URLListAPITests(TestCase):
+class URLListAPITests(AuthenticatedAPITestCase):
     def test_lists_only_active_urls(self):
-        live = URL.objects.create(original_url='https://example.com/live')
-        URL.objects.create(original_url='https://example.com/off', is_active=False)
+        caller = self.authenticate()
+        live = URL.objects.create(original_url='https://example.com/live', owner_id=caller.id)
+        URL.objects.create(
+            original_url='https://example.com/off', owner_id=caller.id, is_active=False
+        )
 
         codes = [item['short_code'] for item in self.client.get('/api/v1/urls/').json()]
         self.assertEqual(codes, [live.short_code])
@@ -156,26 +167,42 @@ class RedirectViewTests(TestCase):
         self.assertEqual(url_id, self.url.pk)
         self.assertEqual(request.META.get('HTTP_USER_AGENT'), 'pytest-agent')
 
-    def test_analytics_failure_returns_502_and_does_not_redirect(self):
+    def test_redirect_still_works_when_analytics_is_down(self):
+        """A reporting outage must never break a link.
+
+        This is the whole point of the click write being best effort: every
+        short URL in the system would otherwise stop resolving whenever a
+        non-critical service went down.
+        """
         self.record_click.side_effect = AnalyticsUnavailable('connection refused')
 
         response = self.client.get(f'/{self.url.short_code}/')
 
-        self.assertEqual(response.status_code, 502)
-        self.assertNotIn('Location', response)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], 'https://example.com/target')
 
-    def test_counter_is_not_incremented_when_analytics_fails(self):
-        """The counter is a cache of what analytics holds.
+    def test_counter_still_advances_when_analytics_is_down(self):
+        """click_count records redirects served, not rows analytics holds.
 
-        Incrementing it after a failed report would claim a click that has no
-        row behind it, and nothing would ever reconcile the difference.
+        After an outage it reads higher than the analytics row count, and the
+        difference is exactly what was lost. That is a reported gap rather than
+        a silent one.
         """
         self.record_click.side_effect = AnalyticsUnavailable('connection refused')
 
         self.client.get(f'/{self.url.short_code}/')
 
         self.url.refresh_from_db()
-        self.assertEqual(self.url.click_count, 0)
+        self.assertEqual(self.url.click_count, 1)
+
+    def test_lost_click_is_logged(self):
+        """The gap has to be visible to an operator; nothing else records it."""
+        self.record_click.side_effect = AnalyticsUnavailable('connection refused')
+
+        with self.assertLogs('shortener.views', level='ERROR') as logs:
+            self.client.get(f'/{self.url.short_code}/')
+
+        self.assertIn('click lost', logs.output[0])
 
     def test_expired_url_is_not_reported_as_a_click(self):
         self.url.expires_at = timezone.now() - timedelta(days=1)
@@ -186,10 +213,11 @@ class RedirectViewTests(TestCase):
         self.record_click.assert_not_called()
 
 
-class RoutingTests(TestCase):
+class RoutingTests(AuthenticatedAPITestCase):
     """The redirect catch-all must not swallow the routes above it."""
 
     def test_api_routes_win_over_the_catch_all(self):
+        self.authenticate()
         URL.objects.create(original_url='https://example.com', custom_alias='api')
         self.assertEqual(self.client.get('/api/v1/urls/').status_code, 200)
 

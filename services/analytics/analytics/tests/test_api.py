@@ -54,8 +54,14 @@ class ClickCreateTests(TestCase):
 
 
 class RoutingTests(TestCase):
-    def test_schema_is_served(self):
-        self.assertEqual(self.client.get('/api/schema/').status_code, 200)
+    def test_schema_is_served_under_the_service_prefix(self):
+        """Not the bare /api/schema/ — the shortener owns that behind the
+        gateway, so only one of the three can publish there."""
+        self.assertEqual(self.client.get('/api/schema/analytics/').status_code, 200)
+        self.assertEqual(self.client.get('/api/schema/').status_code, 404)
+
+    def test_swagger_ui_is_served_under_the_service_prefix(self):
+        self.assertEqual(self.client.get('/api/docs/analytics/').status_code, 200)
 
     def test_admin_is_mounted_under_the_service_prefix(self):
         self.assertEqual(self.client.get('/admin/analytics/').status_code, 302)

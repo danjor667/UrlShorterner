@@ -17,13 +17,13 @@ def record_click(url_id, request):
     """Report one click to the analytics service.
 
     Raises `AnalyticsUnavailable` on a timeout, a connection error or any
-    non-2xx response. The caller turns that into a 502 rather than redirecting:
-    the click log is the source of truth for analytics, and a redirect that
-    quietly loses events would leave the two services permanently disagreeing.
+    non-2xx response. The caller logs that and redirects anyway — a report with
+    a gap is a much smaller failure than a short link that does not resolve.
 
-    The trade is that analytics is on the critical path of every public
-    redirect. Module 8 moves this onto a Celery task, which is what makes the
-    dependency optional again.
+    Raising rather than swallowing the error here is still the right shape: the
+    decision about what an unreachable analytics service means belongs to the
+    caller, not to the transport. Module 8 changes that answer again by putting
+    the click on a queue that survives the outage entirely.
     """
     payload = {
         'url_id': url_id,

@@ -1,19 +1,6 @@
-# Module 5: one service behind the gateway.
-#
-# This file publishes exactly ONE port — the gateway's. Postgres and the
-# shortener are reachable only from inside the compose network, which is what a
-# deployment should look like and, since there is no override file, exactly
-# what `docker compose up` gives you.
-#
-# Everything the shortener serves is reachable through the gateway on :8000,
-# including /api/docs/ and /admin/, so a second published port would buy
-# nothing here. Module 6 revisits that: three services each with their own
-# OpenAPI schema, and only one can own /api/docs/ behind the gateway.
 
 services:
-  # One database per service, each in its own container. The name carries the
-  # owner: when accounts and analytics arrive in Module 6 they get db-accounts
-  # and db-analytics beside this, never a second connection into this one.
+
   db-shortener:
     image: postgres:16-alpine
     environment:
@@ -71,16 +58,19 @@ services:
       DB_USER: shortener
       DB_PASSWORD: shortener
       STATIC_ROOT: /app/staticfiles
-      # Every redirect blocks on this service, so it is a hard dependency
-      # rather than a best-effort one.
+      # Clicks are reported here, but a redirect no longer waits on it — see
+      # URLRedirectView. Deliberately NOT in depends_on: making the shortener
+      # wait for analytics to be healthy would put link availability back
+      # behind a reporting service, which is what we just stopped doing.
       ANALYTICS_URL: http://analytics:8000
     depends_on:
       db-shortener:
         condition: service_healthy
-      analytics:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/urls/').status==200 else 1)\""]
+      # Probes the schema, not /api/v1/urls/: as of Module 7 the API requires a
+      # token, and an unauthenticated probe would report a healthy service as
+      # down. The schema view is the cheapest endpoint that stays anonymous.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/').status==200 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -103,7 +93,7 @@ services:
     healthcheck:
       # No public endpoint yet (Module 7 adds them), so the schema view is the
       # cheapest thing that proves Django booted and can serve a request.
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/').status==200 else 1)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/auth/').status==200 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -124,7 +114,7 @@ services:
       db-analytics:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/').status==200 else 1)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/schema/analytics/').status==200 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 5

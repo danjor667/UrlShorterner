@@ -1,0 +1,31 @@
+
+services:
+  gateway:
+    ports:
+      - "8000:80"          # unchanged; the normal way in
+
+  auth:
+    ports:
+      - "8001:8000"
+
+  shortener:
+    ports:
+      - "8002:8000"
+
+  analytics:
+    ports:
+      - "8003:8000"
+
+  # Databases, for psql / DataGrip / pgAdmin. 5432 is left alone so a Postgres
+  # already running on the host does not collide.
+  db-auth:
+    ports:
+      - "5433:5432"        # psql -h localhost -p 5433 -U auth -d auth
+
+  db-shortener:
+    ports:
+      - "5434:5432"        # psql -h localhost -p 5434 -U shortener -d shortener
+
+  db-analytics:
+    ports:
+      - "5435:5432"        # psql -h localhost -p 5435 -U analytics -d analytics

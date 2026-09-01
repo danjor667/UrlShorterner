@@ -1,15 +1,11 @@
 """Base settings every service builds on.
 
-There is only one service in Module 5, so this file looks like overhead today.
-It exists because the alternative is worse: Module 6 stands up two more
-services, and anything that must agree across all of them — the database
-conventions, the DRF defaults, the middleware order — has to live somewhere
-that is not one particular service.
 
 A service does ``from common.base_settings import *`` and then adds only what
 is genuinely its own: its apps, its URLconf, its database name.
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 from decouple import config, Csv
@@ -18,15 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-only-do-not-deploy-this-key')
 
-# Read from the environment rather than hardcoded, so a deployment is not one
-# forgotten edit away from serving tracebacks. Module 8 replaces this with a
-# single PRODUCTION_MODE switch that DEBUG is derived from.
+
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,shortener,auth,analytics', cast=Csv())
-
-RUNNING_TESTS = 'test' in __import__('sys').argv
-
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -69,27 +60,6 @@ TEMPLATES = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Database — one per service, each in its own Postgres container.
-#
-# A service owns its data outright: nothing else holds a connection to it, so
-# there is no cross-service join to accidentally rely on and no shared
-# `django_migrations` table for three services to race on. `manage.py migrate`
-# with no arguments is correct again — the built-in Django migrations are
-# applied once per database, by the one service that owns it.
-#
-# The cost is that a query spanning services becomes an API call, and that
-# `docker compose up` runs N Postgres containers. That is the trade the
-# database-per-service pattern makes, and it is the point of it.
-#
-# There is deliberately no DATABASES here: base settings cannot know which
-# database is yours. Each service declares it:
-#
-#     DATABASES = {'default': service_database('shortener')}
-#
-# Environment variables still win, which is how compose points the service at
-# its container and how a deployment injects real credentials.
-# ---------------------------------------------------------------------------
 
 def service_database(name):
     """Return a DATABASES['default'] entry for the service's own database.
@@ -132,10 +102,40 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Stateless by default: builds a TokenUser out of the JWT's claims and
+    # never touches a user table, because these services do not have one.
+    # The auth service overrides this with the DB-backed JWTAuthentication.
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTStatelessUserAuthentication',
+    ],
+
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        'login': config('LOGIN_THROTTLE_RATE', default='5/min'),
+        'register': config('REGISTER_THROTTLE_RATE', default='10/hour'),
+        'create_short_code': config('CREATE_THROTTLE_RATE', default='100/day'),
+        'upgrade': config('UPGRADE_THROTTLE_RATE', default='10/hour'),
+    },
 }
+
+
+SIMPLE_JWT = {
+    'ALGORITHM': 'HS256',
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=config('JWT_ACCESS_MINUTES', default=60, cast=int)),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=config('JWT_REFRESH_DAYS', default=7, cast=int)),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+
+FREE_TIER_URL_LIMIT = config('FREE_TIER_URL_LIMIT', default=10, cast=int)

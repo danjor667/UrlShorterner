@@ -8,14 +8,26 @@ real account here.
 """
 
 from common.base_settings import *  # noqa: F401,F403
-from common.base_settings import INSTALLED_APPS, service_database
+from common.base_settings import INSTALLED_APPS, REST_FRAMEWORK, service_database
 
-INSTALLED_APPS = INSTALLED_APPS + ['account']
+INSTALLED_APPS = INSTALLED_APPS + [
+    'rest_framework_simplejwt',
+    # Needs a user table to record blacklisted tokens, so it can only live here.
+    'rest_framework_simplejwt.token_blacklist',
+    'account',
+]
+
+
+REST_FRAMEWORK = {
+    **REST_FRAMEWORK,
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+}
 
 DATABASES = {'default': service_database('auth')}
 
-# The custom user has to be declared before the first migration runs against
-# this database, which is why the account app ships its own 0001_initial.
+
 AUTH_USER_MODEL = 'account.User'
 
 ROOT_URLCONF = 'auth_service.urls'
@@ -25,7 +37,7 @@ SERVICE_NAME = 'auth'
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Auth Service',
-    'DESCRIPTION': 'Accounts and tiering. Registration and login arrive in Module 7.',
+    'DESCRIPTION': 'Registration, login, tiering and token issuance.',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
 }

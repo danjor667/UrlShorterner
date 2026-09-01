@@ -3,13 +3,7 @@ from django.db import models
 
 
 class User(AbstractUser):
-    """Custom user with tiering, used as AUTH_USER_MODEL.
 
-    This table lives in the auth service's database and nothing else joins to
-    it. The shortener stores an `owner_id` integer pointing here; that is a
-    reference the database does not enforce, so deleting a user does not
-    cascade to their URLs the way a ForeignKey would.
-    """
 
     class Tier(models.TextChoices):
         FREE = 'free', 'Free'
@@ -30,3 +24,7 @@ class User(AbstractUser):
     def has_premium_access(self):
         """Single place for Module 7 tier checks to hang off."""
         return self.is_premium or self.tier in (self.Tier.PREMIUM, self.Tier.ADMIN)
+
+
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username']
