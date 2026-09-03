@@ -1,0 +1,28 @@
+
+services:
+  gateway:
+    ports:
+      - "8000:80"
+
+  auth:
+    ports:
+      - "8001:8000"
+
+  shortener:
+    ports:
+      - "8002:8000"
+
+  analytics:
+    ports:
+      - "8003:8000"
+  db-auth:
+    ports:
+      - "5433:5432"
+
+  db-shortener:
+    ports:
+      - "5434:5432"
+
+  db-analytics:
+    ports:
+      - "5435:5432"
