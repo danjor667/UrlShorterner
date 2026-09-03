@@ -111,14 +111,6 @@ class URLRedirectView(APIView):
         if url.is_expired:
             return Response({'error': 'This URL has expired.'}, status=status.HTTP_410_GONE)
 
-        # Reporting must never be able to break a link. If analytics cannot
-        # be reached the click is lost and that is genuinely bad, but it is a
-        # gap in a report — far cheaper than every short URL in the system
-        # returning an error because a non-critical service is down.
-        #
-        # Module 8 stops making this a choice: the click goes onto a durable
-        # queue instead, so it survives the outage and the redirect still
-        # returns immediately.
         try:
             record_click(url.pk, request)
         except AnalyticsUnavailable as exc:
@@ -126,9 +118,5 @@ class URLRedirectView(APIView):
                 'click lost for url %s — analytics unreachable: %s', url.pk, exc
             )
 
-        # Counted whether or not analytics heard about it: this records
-        # redirects *served*, which is the truth from this service's side.
-        # After an outage it will read higher than the number of rows in
-        # analytics, and the difference is exactly what was lost.
         URL.objects.filter(pk=url.pk).update(click_count=F('click_count') + 1)
         return HttpResponseRedirect(url.original_url)
