@@ -13,6 +13,24 @@ class AnalyticsUnavailable(Exception):
     """Analytics did not durably record the click."""
 
 
+def client_ip(request):
+    """The visitor's address, not the proxy's.
+
+    Behind the gateway `REMOTE_ADDR` is nginx, so every click would otherwise
+    be recorded as the gateway's container address — which is what was
+    happening, and why no geolocation could ever resolve.
+
+    `X-Real-IP` is set by nginx with `$remote_addr` and *overwrites* whatever
+    arrived, so a visitor cannot forge it. `X-Forwarded-For` is deliberately
+    not used: nginx appends to that one, leaving any client-supplied value at
+    the front where a naive reader would trust it.
+
+    Falls back to `REMOTE_ADDR` for direct access that does not pass through
+    the gateway — docker-compose.local.yml, and tests.
+    """
+    return request.META.get('HTTP_X_REAL_IP') or request.META.get('REMOTE_ADDR') or None
+
+
 def record_click(url_id, request):
     """Report one click to the analytics service.
 
@@ -27,7 +45,7 @@ def record_click(url_id, request):
     """
     payload = {
         'url_id': url_id,
-        'ip_address': request.META.get('REMOTE_ADDR') or None,
+        'ip_address': client_ip(request),
         'user_agent': request.META.get('HTTP_USER_AGENT', '')[:1000],
         'referrer': request.META.get('HTTP_REFERER', '')[:2048],
     }

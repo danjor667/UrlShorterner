@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import requests
 from django.test import TestCase, override_settings
 
-from ..analytics_client import AnalyticsUnavailable, record_click
+from ..analytics_client import AnalyticsUnavailable, client_ip, record_click
 
 
 @override_settings(ANALYTICS_URL='http://analytics:8000', ANALYTICS_TIMEOUT=3.0)
@@ -62,3 +62,47 @@ class RecordClickTests(TestCase):
 
         with self.assertRaises(AnalyticsUnavailable):
             record_click(1, self._request())
+
+
+class ClientIPTests(TestCase):
+    """Which address gets recorded for a click.
+
+    Behind the gateway `REMOTE_ADDR` is nginx, so reading it recorded the
+    gateway's own container address on every click and no lookup could ever
+    resolve.
+    """
+
+    def _request(self, **meta):
+        request = Mock()
+        request.META = meta
+        return request
+
+    def test_prefers_x_real_ip(self):
+        request = self._request(HTTP_X_REAL_IP='105.112.0.1', REMOTE_ADDR='172.20.0.8')
+        self.assertEqual(client_ip(request), '105.112.0.1')
+
+    def test_falls_back_to_remote_addr(self):
+        """Direct access does not pass through nginx, so the header is absent."""
+        self.assertEqual(client_ip(self._request(REMOTE_ADDR='10.1.2.3')), '10.1.2.3')
+
+    def test_returns_none_when_nothing_is_available(self):
+        self.assertIsNone(client_ip(self._request()))
+
+    def test_x_forwarded_for_is_ignored(self):
+        """nginx appends to XFF, so a client-supplied value survives in it.
+
+        Trusting that header would let any visitor claim any address and
+        poison the country breakdown.
+        """
+        request = self._request(
+            HTTP_X_FORWARDED_FOR='1.2.3.4, 172.20.0.8',
+            HTTP_X_REAL_IP='105.112.0.1',
+            REMOTE_ADDR='172.20.0.8',
+        )
+        self.assertEqual(client_ip(request), '105.112.0.1')
+
+    @patch('shortener.analytics_client.requests.post')
+    def test_the_reported_payload_uses_it(self, post):
+        post.return_value = Mock(status_code=201)
+        record_click(1, self._request(HTTP_X_REAL_IP='8.8.8.8', REMOTE_ADDR='172.20.0.8'))
+        self.assertEqual(post.call_args.kwargs['json']['ip_address'], '8.8.8.8')

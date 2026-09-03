@@ -4,6 +4,8 @@ djangorestframework-simplejwt==5.5.1
 PyJWT==2.13.0
 drf-spectacular==0.30.0
 psycopg[binary]
+# Reads the DB-IP / GeoLite2 .mmdb format.
+geoip2==5.1.0
 python-decouple==3.8
 whitenoise==6.11.0
 gunicorn==23.0.0

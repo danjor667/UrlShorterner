@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from common.permissions import IsPremium, caller_id
 
+from . import geoip
 from .models import Click, URLProjection
 from .serializers import (
     AnalyticsSerializer, ClickCreateSerializer, ClickSerializer, URLProjectionSerializer,
@@ -28,6 +29,15 @@ class ClickCreateView(generics.CreateAPIView):
     @extend_schema(summary="Record a click (internal)")
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        """Resolve the country here; the shortener only reports what it saw.
+
+        Anything the caller sends for country/city is overwritten. Done on
+        write so it is one lookup per click, and so a row keeps the answer that
+        was true when it happened.
+        """
+        serializer.save(**geoip.lookup(serializer.validated_data.get('ip_address')))
 
 
 class URLProjectionUpsertView(APIView):
