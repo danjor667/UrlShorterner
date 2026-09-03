@@ -9,11 +9,6 @@ from django.db import models
 
 
 class Click(models.Model):
-    # Not a ForeignKey: the url table belongs to the shortener service and
-    # lives in a different database, so nothing here can reference it. Nothing
-    # at the database level enforces that this points at a live URL, and
-    # deleting one does not cascade. Module 7 adds the reporting endpoint that
-    # reads these rows; Module 8 makes the write asynchronous.
     url_id = models.BigIntegerField(db_index=True)
     clicked_at = models.DateTimeField(auto_now_add=True, db_index=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)

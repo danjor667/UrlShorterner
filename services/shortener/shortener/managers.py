@@ -27,10 +27,6 @@ class URLQuerySet(models.QuerySet):
 
     def popular(self):
         """Rank by the denormalized counter.
-
-        Deliberately not `Count('clicks')`: the Click table belongs to the
-        analytics service and this service does not install that app, so the
-        reverse accessor does not exist here. Analytics ranks by its own rows.
         """
         return self.order_by('-click_count')
 
@@ -39,11 +35,6 @@ class URLQuerySet(models.QuerySet):
         return self.filter(Q(short_code=code) | Q(custom_alias=code))
 
     def with_related(self):
-        """Prefetch the M2M.
-
-        There is no `select_related('owner')` any more — the owner is an id in
-        another service's database, not a relation this query can follow.
-        """
         return self.prefetch_related('tags')
 
 

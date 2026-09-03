@@ -48,9 +48,6 @@ class URLRedirectView(APIView):
         if url.is_expired:
             return Response({'error': 'This URL has expired.'}, status=status.HTTP_410_GONE)
 
-        # Analytics first, and only then the local counter. Doing it in this
-        # order means click_count can never claim a click that analytics has
-        # no row for; the reverse order would drift on every failure.
         try:
             record_click(url.pk, request)
         except AnalyticsUnavailable as exc:

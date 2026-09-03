@@ -30,17 +30,11 @@ class URL(models.Model):
     original_url = models.URLField(max_length=2048)
     short_code = models.CharField(max_length=10, unique=True, db_index=True, default=generate_short_code)
     custom_alias = models.CharField(max_length=10, unique=True, null=True, blank=True)
-    # Not a ForeignKey: the user table belongs to the auth service and this
-    # service does not install its app. Nothing at the database level enforces
-    # that this points at a real user, and deleting one no longer cascades here.
     owner_id = models.BigIntegerField(null=True, blank=True, db_index=True)
-    # Tags, by contrast, are entirely this service's own — no boundary is
-    # crossed, so a real ManyToManyField is still the right thing.
+
     tags = models.ManyToManyField(Tag, related_name='urls', blank=True)
     is_active = models.BooleanField(default=True)
     expires_at = models.DateTimeField(null=True, blank=True)
-    # A denormalized count of what analytics holds. The redirect only
-    # increments it once analytics has durably recorded the click.
     click_count = models.PositiveIntegerField(default=0)
 
     title = models.CharField(max_length=255, blank=True)
