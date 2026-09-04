@@ -50,7 +50,7 @@ Module 8's Celery hand-off is what removes it.
 | Branch | Adds |
 |---|---|
 | `master` | The skeleton. `URL` model, create / list / redirect, Swagger, admin, gateway, Docker. One service, its own database. |
-| **`module-6`** ← you are here | `auth` and `analytics` services. Custom user with tiering, tags, click tracking, custom manager and queryset. |
+| **`module-6`**  | `auth` and `analytics` services. Custom user with tiering, tags, click tracking, custom manager and queryset. |
 | `module-7` | JWT (RS256), registration and login, ownership permissions, premium tiers, the analytics endpoint. |
 | `module-8` | Redis caching, Celery workers and beat, structured logging, health probes, production settings. |
 
@@ -107,17 +107,104 @@ The gateway returns 404 for `/internal/` so it cannot be reached from outside.
 
 ## The API
 
+Served through the gateway at `http://localhost:8000`. **No authentication** —
+`DEFAULT_PERMISSION_CLASSES` is `AllowAny` on every service in this module, and
+there is no pagination or rate limiting yet either.
+
+| Method | Path | What |
+|---|---|---|
+| `POST` | `/api/v1/urls/create/` | Create a short URL |
+| `GET`  | `/api/v1/urls/` | List active short URLs |
+| `GET`  | `/{code}/` | Public redirect |
+| `POST` | `/internal/clicks/` | Record a click — service-to-service only |
+
+### POST /api/v1/urls/create/
+
+| Field | Required | Notes |
+|---|---|---|
+| `original_url` | yes | Max 2048 chars, must be a valid URL |
+| `custom_alias` | no | Max 10 chars, unique across aliases *and* generated codes |
+| `expires_at` | no | ISO-8601; the redirect returns 410 once it passes |
+| `tags` | no | List of names. Unknown names are created, not rejected |
+
 ```bash
-# create, with tags
-curl -X POST localhost:8000/api/v1/urls/create/ -H 'Content-Type: application/json' \
+curl -X POST localhost:8000/api/v1/urls/create/ \
+  -H 'Content-Type: application/json' \
   -d '{"original_url":"https://example.com/","custom_alias":"promo","tags":["docs","launch"]}'
-
-# list active
-curl localhost:8000/api/v1/urls/
-
-# follow — writes a Click row in the analytics database
-curl -I localhost:8000/promo/
 ```
+
+`201` answers with the full representation, not the fields you sent:
+
+```json
+{
+  "id": 1,
+  "original_url": "https://example.com/",
+  "short_code": "aB3xY9",
+  "custom_alias": "promo",
+  "short_url": "http://localhost:8000/promo/",
+  "owner_id": null,
+  "tags": [{"id": 1, "name": "docs"}, {"id": 2, "name": "launch"}],
+  "title": "", "description": "", "favicon": "",
+  "is_active": true,
+  "expires_at": null,
+  "click_count": 0,
+  "created_at": "2026-09-04T09:12:33.481Z"
+}
+```
+
+A `short_code` is always generated, even alongside an alias, and the generator
+retries until it dodges every existing code *and* alias. Both resolve;
+`short_url` shows the alias, since that is what `active_code` prefers. A taken
+alias or an invalid URL is a `400`.
+
+### GET /api/v1/urls/
+
+```bash
+curl localhost:8000/api/v1/urls/
+```
+
+A bare JSON array of the object above, newest first. Active means `is_active`
+and not past `expires_at`, so a deactivated or expired URL leaves the list
+without being deleted. No pagination — this returns every active row.
+
+### GET /{code}/
+
+```bash
+curl -i localhost:8000/promo/
+```
+
+The one public endpoint. Takes the generated code or the custom alias.
+
+| Status | When |
+|---|---|
+| `302` | `Location` holds `original_url`; `click_count` is incremented |
+| `404` | Unknown code, or `is_active=false` |
+| `410` | Past `expires_at` |
+| `502` | Analytics could not record the click |
+
+That last row is this module's trade, described above: the redirect blocks on
+the click being recorded rather than quietly losing it.
+
+### POST /internal/clicks/
+
+On the analytics service, called by the shortener's `record_click()` on every
+redirect with a 3s timeout (`ANALYTICS_TIMEOUT`). The gateway returns 404 for
+`/internal/`, so it is reachable inside the compose network and nowhere else.
+
+```json
+{
+  "url_id": 1,
+  "ip_address": "203.0.113.7",
+  "user_agent": "Mozilla/5.0 ...",
+  "referrer": "https://news.example.com/"
+}
+```
+
+`url_id` is a plain integer — the click table is in another database and cannot
+hold a foreign key to `URL`. `city` and `country` are accepted but never sent:
+geo-IP is not in this module, and the fields exist so the schema does not change
+when it arrives. `201` on success; any non-2xx, timeout or connection error
+becomes the `502` above.
 
 ## Tests
 
@@ -133,13 +220,3 @@ The shortener's redirect tests patch `record_click`: a unit test of one service
 should not need a second one running. The real cross-service call is covered by
 running the stack.
 
-## Not in this module
-
-No authentication — every endpoint is public, and `DEFAULT_PERMISSION_CLASSES`
-says so explicitly. No registration or login, and no public analytics endpoint;
-those are Module 7. No caching or background work; that is Module 8.
-
-Also missing on purpose: the list endpoint has no pagination, `Click.city` and
-`Click.country` are never populated (no geo-IP lookup yet), and the analytics
-service cannot show you a URL's `short_code` — it stores only `url_id`, and the
-read model that fixes that arrives with the Module 7 reporting endpoint.
